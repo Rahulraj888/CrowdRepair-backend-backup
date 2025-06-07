@@ -67,13 +67,14 @@ router.post(
       // 5. Generate email verification token & expiry (24h)
       const emailToken = generateToken();
       user.emailVerificationToken = emailToken;
-      user.emailVerificationTokenExpires = Date.now() + 24 * 60 * 60 * 1000; // 24 hours
+      // user.emailVerificationTokenExpires = Date.now() + 24 * 60 * 60 * 1000; // 24 hours
+      user.emailVerificationTokenExpires = Date.now() + 3 * 60 * 1000; // 24 hours
       
       // 6. Save user ot the database
       await user.save();
 
       // 7. Send verification email
-      const verifyURL = `http://localhost:5000/api/auth/verify-email?token=${emailToken}`;
+      const verifyURL = `${process.env.CLIENT_URL}/verify-email?token=${emailToken}`;
       const message = `
         <h1>Email Verification</h1>
         <p>Hi ${name},</p>
@@ -238,7 +239,7 @@ router.post(
       await user.save();
 
       // 4. Send reset email
-      const resetURL = `http://localhost:5000/api/auth/reset-password?token=${resetToken}`;
+      const resetURL = `${process.env.CLIENT_URL}/reset-password?token=${resetToken}`;
       const message = `
         <h1>Password Reset</h1>
         <p>Hi ${user.name},</p>
@@ -307,7 +308,6 @@ router.post(
   }
 );
 
-
 // ─── @route   GET /api/auth/me
 //     @desc    Get current user (protected)
 //     @access  Private
@@ -324,5 +324,54 @@ router.get('/me', auth, async (req, res) => {
     res.status(500).send('Server error');
   }
 });
+
+
+// ─── @route   POST /api/auth/resend-verification
+//     @desc    Send a fresh email‐verification link
+//     @access  Public
+router.post(
+  '/resend-verification',
+  [ body('email', 'Valid email is required').isEmail() ],
+  async (req, res) => {
+    // 1) Validate
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+    const { email } = req.body;
+
+    try {
+      // 2) Fetch user & ensure not already verified
+      const user = await User.findOne({ email });
+      if (!user) {
+        return res.status(400).json({ msg: 'No account with that email found.' });
+      }
+      if (user.isVerified) {
+        return res.status(400).json({ msg: 'Email is already verified.' });
+      }
+
+      // 3) Create new token + expiry
+      const emailToken = generateToken();
+      user.emailVerificationToken        = emailToken;
+      user.emailVerificationTokenExpires = Date.now() + 24*60*60*1000;
+      await user.save();
+
+      // 4) Send email pointing at your front end
+      const link = `${process.env.CLIENT_URL}/verify-email?token=${emailToken}`;
+      const html = `
+        <h1>Verify your email again</h1>
+        <p>Click below to verify:</p>
+        <a href="${link}">${link}</a>
+      `;
+      await sendEmail({ to: email, subject: 'Resend Verification', html });
+
+      res.json({ msg: 'Verification email resent. Check your inbox.' });
+    } catch (err) {
+      console.error(err);
+      res.status(500).send('Server error');
+    }
+  }
+);
+
 
 module.exports = router;
