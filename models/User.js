@@ -47,7 +47,6 @@ const userSchema = new mongoose.Schema({
     // timestamp of when they clicked the link
   },
 
-  // ─── Password Reset ───────────────────────────────────────────────────────────
   resetPasswordToken: {
     type: String
     // e.g., crypto.randomBytes(32).toString('hex')
@@ -57,15 +56,11 @@ const userSchema = new mongoose.Schema({
     // e.g., Date.now() + (1 * 60 * 60 * 1000) for 1h expiry
   },
 
-  // ─── Timestamps ───────────────────────────────────────────────────────────────
   createdAt: {
     type: Date,
     default: Date.now
   }
 });
 
-// OPTIONAL: You could add TTL indexes for automatic cleanup, e.g.,
-// userSchema.index({ emailVerificationTokenExpires: 1 }, { expireAfterSeconds: 0 });
-// But usually you handle cleanup in your app logic.
 
 module.exports = mongoose.model('User', userSchema);
