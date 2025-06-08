@@ -1,10 +1,3 @@
-// routes/auth.js
-//Includes 4 api
-// one api to regiser 
-// one api to verify email for registration
-// one api to login 
-//one api to reset password
-
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
@@ -43,7 +36,7 @@ router.post(
 
     const { name, email, password, mobile } = req.body;
     try {
-      // 2. Check if user already exists
+      // Check if user already exists
       let user = await User.findOne({ email });
       if (user) {
         return res
@@ -51,26 +44,27 @@ router.post(
           .json({ errors: [{ msg: 'User already exists' }] });
       }
 
-      // 3. Create new user (not yet verified)
+      // Create new user (not yet verified)
       user = new User({
         name,
         email,
-        password, // we'll hash next
+        password,
         mobile,
         isVerified: false
       });
 
-      // 4. Hash password
+      // Hash password
       const salt = await bcrypt.genSalt(10);
       user.password = await bcrypt.hash(password, salt);
 
-      // 5. Generate email verification token & expiry (24h)
+      // Generate email verification token & expiry (24h)
       const emailToken = generateToken();
       user.emailVerificationToken = emailToken;
-      // user.emailVerificationTokenExpires = Date.now() + 24 * 60 * 60 * 1000; // 24 hours
-      user.emailVerificationTokenExpires = Date.now() + 3 * 60 * 1000; // 24 hours
+      user.emailVerificationTokenExpires = Date.now() + 24 * 60 * 60 * 1000; // 24 hours
+      // for testin purpose
+      // user.emailVerificationTokenExpires = Date.now() + 3 * 60 * 1000; // 24 hours
       
-      // 6. Save user ot the database
+      // 6. Save user to the database
       await user.save();
 
       // 7. Send verification email
@@ -82,8 +76,6 @@ router.post(
         <a href="${verifyURL}">${verifyURL}</a>
         <p>This link will expire in 24 hours.</p>
       `;
-
-      //send email for verification
       await sendEmail({
         to: email,
         subject: 'Verify Your Email',
@@ -103,7 +95,6 @@ router.post(
 // ─── @route   GET /api/auth/verify-email
 //     @desc    Verify the user’s email using token
 //     @access  Public
-// TODO add redirect login after clicking verify
 router.get('/verify-email', async (req, res) => {
   const token = req.query.token;
   if (!token) {
@@ -119,17 +110,12 @@ router.get('/verify-email', async (req, res) => {
       return res.status(400).json({ msg: 'Token is invalid or expired.' });
     }
 
-    // Mark as verified
+    // Mark as verified and reset token
     user.isVerified = true;
     user.verifiedAt = Date.now();
     user.emailVerificationToken = undefined;
     user.emailVerificationTokenExpires = undefined;
     await user.save();
-
-    // OPTIONAL: redirect to front-end page (e.g., React route)
-    // res.redirect(`${process.env.CLIENT_URL}/email-verified`);
-
-    // Or simply return JSON:
     res.json({ msg: 'Email successfully verified! You can now log in.' });
   } catch (err) {
     console.error(err.message);
@@ -148,7 +134,7 @@ router.post(
     body('password', 'Password is required').exists()
   ],
   async (req, res) => {
-    // 1. Validate input
+    //Validate input
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({ errors: errors.array() });
@@ -156,22 +142,15 @@ router.post(
 
     const { email, password } = req.body;
     try {
-      // 2. Check if user exists
-      let user = await User.findOne({ email });
+      //Check if user exists
+      const user = await User.findOne({ email });
       if (!user) {
         return res
           .status(400)
           .json({ errors: [{ msg: 'Invalid credentials' }] });
       }
 
-      // 3. Check if email is verified
-      if (!user.isVerified) {
-        return res
-          .status(400)
-          .json({ errors: [{ msg: 'Please verify your email before logging in.' }] });
-      }
-
-      // 4. Compare password
+      //Compare password
       const isMatch = await bcrypt.compare(password, user.password);
       if (!isMatch) {
         return res
@@ -179,14 +158,22 @@ router.post(
           .json({ errors: [{ msg: 'Invalid credentials' }] });
       }
 
-      // 5. Create JWT payload
+      //Enforce email verification only for non-admins
+      if (user.role !== 'admin' && !user.isVerified) {
+        return res
+          .status(400)
+          .json({ errors: [{ msg: 'Please verify your email before logging in.' }] });
+      }
+
+      //Create JWT payload (include role)
       const payload = {
         user: {
-          id: user.id
+          id: user.id,
+          role: user.role
         }
       };
 
-      // 6. Sign token (expires in 2 hours)
+      //Sign token (expires in 2 hours)
       jwt.sign(
         payload,
         process.env.JWT_SECRET,
@@ -211,7 +198,7 @@ router.post(
   '/forgot-password',
   [body('email', 'Please include a valid email').isEmail()],
   async (req, res) => {
-    // 1. Validate input
+    //Validate input
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({ errors: errors.array() });
@@ -219,7 +206,7 @@ router.post(
 
     const { email } = req.body;
     try {
-      // 2. Check if user exists & is verified
+      //Check if user exists & is verified
       const user = await User.findOne({ email });
       if (!user) {
         return res
@@ -232,13 +219,13 @@ router.post(
           .json({ errors: [{ msg: 'Email not verified. Cannot reset password.' }] });
       }
 
-      // 3. Generate reset token & expiry (1 hour)
+      //Generate reset token & expiry (1 hour)
       const resetToken = generateToken();
       user.resetPasswordToken = resetToken;
       user.resetPasswordExpires = Date.now() + 1 * 60 * 60 * 1000; // 1 hour
       await user.save();
 
-      // 4. Send reset email
+      //Send reset email
       const resetURL = `${process.env.CLIENT_URL}/reset-password?token=${resetToken}`;
       const message = `
         <h1>Password Reset</h1>
@@ -274,14 +261,14 @@ router.post(
       return res.status(400).json({ msg: 'No token provided' });
     }
 
-    // 1. Validate new password
+    //Validate new password
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({ errors: errors.array() });
     }
 
     try {
-      // 2. Find user by token & expiry
+      //Find user by token & expiry
       const user = await User.findOne({
         resetPasswordToken: token,
         resetPasswordExpires: { $gt: Date.now() }
@@ -290,11 +277,11 @@ router.post(
         return res.status(400).json({ msg: 'Token is invalid or expired.' });
       }
 
-      // 3. Hash new password
+      //Hash new password
       const salt = await bcrypt.genSalt(10);
       user.password = await bcrypt.hash(req.body.password, salt);
 
-      // 4. Clear reset fields
+      //Clear reset fields
       user.resetPasswordToken = undefined;
       user.resetPasswordExpires = undefined;
 
@@ -333,7 +320,7 @@ router.post(
   '/resend-verification',
   [ body('email', 'Valid email is required').isEmail() ],
   async (req, res) => {
-    // 1) Validate
+    //Validate
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({ errors: errors.array() });
@@ -341,7 +328,7 @@ router.post(
     const { email } = req.body;
 
     try {
-      // 2) Fetch user & ensure not already verified
+      //Fetch user & ensure not already verified
       const user = await User.findOne({ email });
       if (!user) {
         return res.status(400).json({ msg: 'No account with that email found.' });
@@ -350,13 +337,13 @@ router.post(
         return res.status(400).json({ msg: 'Email is already verified.' });
       }
 
-      // 3) Create new token + expiry
+      //Create new token + expiry
       const emailToken = generateToken();
-      user.emailVerificationToken        = emailToken;
-      user.emailVerificationTokenExpires = Date.now() + 24*60*60*1000;
+      user.emailVerificationToken = emailToken;
+      user.emailVerificationTokenExpires = Date.now() + 24*60*60*1000; //1 hr
       await user.save();
 
-      // 4) Send email pointing at your front end
+      //Send email pointing at your front end
       const link = `${process.env.CLIENT_URL}/verify-email?token=${emailToken}`;
       const html = `
         <h1>Verify your email again</h1>
