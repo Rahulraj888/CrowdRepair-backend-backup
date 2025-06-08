@@ -143,7 +143,7 @@ router.post(
     const { email, password } = req.body;
     try {
       //Check if user exists
-      let user = await User.findOne({ email });
+      const user = await User.findOne({ email });
       if (!user) {
         return res
           .status(400)
@@ -158,15 +158,20 @@ router.post(
           .json({ errors: [{ msg: 'Invalid credentials' }] });
       }
 
-      //Check if email is verified
-      if (!user.isVerified) {
+      //Enforce email verification only for non-admins
+      if (user.role !== 'admin' && !user.isVerified) {
         return res
           .status(400)
           .json({ errors: [{ msg: 'Please verify your email before logging in.' }] });
       }
 
-      //Create JWT payload
-      const payload = { user: { id: user.id, role: user.role } };
+      //Create JWT payload (include role)
+      const payload = {
+        user: {
+          id: user.id,
+          role: user.role
+        }
+      };
 
       //Sign token (expires in 2 hours)
       jwt.sign(
