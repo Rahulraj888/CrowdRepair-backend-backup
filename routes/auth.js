@@ -147,7 +147,7 @@ router.post(
       if (!user) {
         return res
           .status(400)
-          .json({ errors: [{ msg: 'Invalid credentials' }] });
+          .json({ errors: [{ msg: 'Account is not registered. Please register your account' }] });
       }
 
       //Compare password
@@ -311,6 +311,53 @@ router.get('/me', auth, async (req, res) => {
     res.status(500).send('Server error');
   }
 });
+
+// ─── @route   PUT /api/auth/me
+//     @desc    Update current user’s profile (name, mobile, bio)
+//     @access  Private
+router.put(
+  '/me',
+  auth,
+  [
+    body('name', 'Name is required').optional().notEmpty(),
+    body('mobile', 'Mobile must be 10 digits').optional().isLength({ min: 10, max: 10 }),
+    body('bio', 'Bio must be under 500 characters').optional().isLength({ max: 500 })
+  ],
+  async (req, res) => {
+    //Validate inputs
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    try {
+      //Pick only the allowed fields
+      const updates = {};
+      ['name', 'mobile', 'bio'].forEach(field => {
+        if (req.body[field] !== undefined) {
+          updates[field] = req.body[field];
+        }
+      });
+
+      //Find & update
+      const user = await User.findByIdAndUpdate(
+        req.user.id,
+        { $set: updates },
+        { new: true, runValidators: true }
+      ).select('-password');
+
+      if (!user) {
+        return res.status(404).json({ msg: 'User not found' });
+      }
+
+      //Return the updated user
+      res.json(user);
+    } catch (err) {
+      console.error(err);
+      res.status(500).send('Server error');
+    }
+  }
+);
 
 
 // ─── @route   POST /api/auth/resend-verification
