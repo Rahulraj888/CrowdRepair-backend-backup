@@ -147,7 +147,7 @@ router.post(
       if (!user) {
         return res
           .status(400)
-          .json({ errors: [{ msg: 'Invalid credentials' }] });
+          .json({ errors: [{ msg: 'Account is not registered. Please register your account' }] });
       }
 
       //Compare password
@@ -312,6 +312,96 @@ router.get('/me', auth, async (req, res) => {
   }
 });
 
+// ─── @route   PUT /api/auth/me
+//     @desc    Update current user’s profile (name, mobile, bio)
+//     @access  Private
+router.put(
+  '/me',
+  auth,
+  [
+    body('name', 'Name is required').optional().notEmpty(),
+    body('mobile', 'Mobile must be 10 digits').optional().isLength({ min: 10, max: 10 }),
+    body('bio', 'Bio must be under 500 characters').optional().isLength({ max: 500 })
+  ],
+  async (req, res) => {
+    //Validate inputs
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    try {
+      //Pick only the allowed fields
+      const updates = {};
+      ['name', 'mobile', 'bio'].forEach(field => {
+        if (req.body[field] !== undefined) {
+          updates[field] = req.body[field];
+        }
+      });
+
+      //Find & update
+      const user = await User.findByIdAndUpdate(
+        req.user.id,
+        { $set: updates },
+        { new: true, runValidators: true }
+      ).select('-password');
+
+      if (!user) {
+        return res.status(404).json({ msg: 'User not found' });
+      }
+
+      //Return the updated user
+      res.json(user);
+    } catch (err) {
+      console.error(err);
+      res.status(500).send('Server error');
+    }
+  }
+);
+
+
+
+// ─── @route   POST /api/auth/change-password
+//     @desc    Change logged-in user’s password
+//     @access  Private
+router.post(
+  '/change-password',
+  auth,  
+  [
+    body('currentPassword', 'Current password is required').exists(),
+    body('newPassword', 'New password must be 6+ chars').isLength({ min: 6 }),
+  ],
+  async (req, res) => {
+    //Validate inputs
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+    const { currentPassword, newPassword } = req.body;
+
+    try {
+      //Load user
+      const user = await User.findById(req.user.id);
+      if (!user) return res.status(404).json({ msg: 'User not found' });
+
+      //Check current password
+      const isMatch = await bcrypt.compare(currentPassword, user.password);
+      if (!isMatch) {
+        return res.status(400).json({ errors: [{ msg: 'Current password is incorrect' }] });
+      }
+
+      //Hash & save new password
+      const salt = await bcrypt.genSalt(10);
+      user.password = await bcrypt.hash(newPassword, salt);
+      await user.save();
+
+      res.json({ msg: 'Password changed successfully' });
+    } catch (err) {
+      console.error(err);
+      res.status(500).send('Server error');
+    }
+  }
+);
 
 // ─── @route   POST /api/auth/resend-verification
 //     @desc    Send a fresh email‐verification link
