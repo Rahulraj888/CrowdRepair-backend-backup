@@ -424,7 +424,7 @@ router.post(
         return res.status(400).json({ msg: 'No account with that email found.' });
       }
       if (user.isVerified) {
-        return res.status(400).json({ msg: 'Email is already verified.' });
+        return res.status(400).json({ msg: 'Email is already verified. Please proceed to Login' });
       }
 
       //Create new token + expiry
