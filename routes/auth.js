@@ -360,6 +360,49 @@ router.put(
 );
 
 
+
+// ─── @route   POST /api/auth/change-password
+//     @desc    Change logged-in user’s password
+//     @access  Private
+router.post(
+  '/change-password',
+  auth,  
+  [
+    body('currentPassword', 'Current password is required').exists(),
+    body('newPassword', 'New password must be 6+ chars').isLength({ min: 6 }),
+  ],
+  async (req, res) => {
+    //Validate inputs
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+    const { currentPassword, newPassword } = req.body;
+
+    try {
+      //Load user
+      const user = await User.findById(req.user.id);
+      if (!user) return res.status(404).json({ msg: 'User not found' });
+
+      //Check current password
+      const isMatch = await bcrypt.compare(currentPassword, user.password);
+      if (!isMatch) {
+        return res.status(400).json({ errors: [{ msg: 'Current password is incorrect' }] });
+      }
+
+      //Hash & save new password
+      const salt = await bcrypt.genSalt(10);
+      user.password = await bcrypt.hash(newPassword, salt);
+      await user.save();
+
+      res.json({ msg: 'Password changed successfully' });
+    } catch (err) {
+      console.error(err);
+      res.status(500).send('Server error');
+    }
+  }
+);
+
 // ─── @route   POST /api/auth/resend-verification
 //     @desc    Send a fresh email‐verification link
 //     @access  Public
