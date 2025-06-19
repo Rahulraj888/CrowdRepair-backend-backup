@@ -124,6 +124,54 @@ router.get('/verify-email', async (req, res) => {
 });
 
 
+// ─── @route   POST /api/auth/resend-verification
+//     @desc    Send a fresh email‐verification link
+//     @access  Public
+router.post(
+  '/resend-verification',
+  [ body('email', 'Valid email is required').isEmail() ],
+  async (req, res) => {
+    //Validate
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+    const { email } = req.body;
+
+    try {
+      //Fetch user & ensure not already verified
+      const user = await User.findOne({ email });
+      if (!user) {
+        return res.status(400).json({ msg: 'No account with that email found.' });
+      }
+      if (user.isVerified) {
+        return res.status(400).json({ msg: 'Email is already verified. Please proceed to Login' });
+      }
+
+      //Create new token + expiry
+      const emailToken = generateToken();
+      user.emailVerificationToken = emailToken;
+      user.emailVerificationTokenExpires = Date.now() + 24*60*60*1000; //1 hr
+      await user.save();
+
+      //Send email pointing at your front end
+      const link = `${process.env.CLIENT_URL}/verify-email?token=${emailToken}`;
+      const html = `
+        <h1>Verify your email again</h1>
+        <p>Click below to verify:</p>
+        <a href="${link}">${link}</a>
+      `;
+      await sendEmail({ to: email, subject: 'Resend Verification', html });
+
+      res.json({ msg: 'Verification email resent. Check your inbox.' });
+    } catch (err) {
+      console.error(err);
+      res.status(500).send('Server error');
+    }
+  }
+);
+
+
 // ─── @route   POST /api/auth/login
 //     @desc    Authenticate user & get JWT (only if verified)
 //     @access  Public
@@ -295,6 +343,49 @@ router.post(
   }
 );
 
+
+// ─── @route   POST /api/auth/change-password
+//     @desc    Change logged-in user’s password
+//     @access  Private
+router.post(
+  '/change-password',
+  auth,  
+  [
+    body('currentPassword', 'Current password is required').exists(),
+    body('newPassword', 'New password must be 6+ chars').isLength({ min: 6 }),
+  ],
+  async (req, res) => {
+    //Validate inputs
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+    const { currentPassword, newPassword } = req.body;
+
+    try {
+      //Load user
+      const user = await User.findById(req.user.id);
+      if (!user) return res.status(404).json({ msg: 'User not found' });
+
+      //Check current password
+      const isMatch = await bcrypt.compare(currentPassword, user.password);
+      if (!isMatch) {
+        return res.status(400).json({ errors: [{ msg: 'Current password is incorrect' }] });
+      }
+
+      //Hash & save new password
+      const salt = await bcrypt.genSalt(10);
+      user.password = await bcrypt.hash(newPassword, salt);
+      await user.save();
+
+      res.json({ msg: 'Password changed successfully' });
+    } catch (err) {
+      console.error(err);
+      res.status(500).send('Server error');
+    }
+  }
+);
+
 // ─── @route   GET /api/auth/me
 //     @desc    Get current user (protected)
 //     @access  Private
@@ -352,97 +443,6 @@ router.put(
 
       //Return the updated user
       res.json(user);
-    } catch (err) {
-      console.error(err);
-      res.status(500).send('Server error');
-    }
-  }
-);
-
-
-
-// ─── @route   POST /api/auth/change-password
-//     @desc    Change logged-in user’s password
-//     @access  Private
-router.post(
-  '/change-password',
-  auth,  
-  [
-    body('currentPassword', 'Current password is required').exists(),
-    body('newPassword', 'New password must be 6+ chars').isLength({ min: 6 }),
-  ],
-  async (req, res) => {
-    //Validate inputs
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
-    const { currentPassword, newPassword } = req.body;
-
-    try {
-      //Load user
-      const user = await User.findById(req.user.id);
-      if (!user) return res.status(404).json({ msg: 'User not found' });
-
-      //Check current password
-      const isMatch = await bcrypt.compare(currentPassword, user.password);
-      if (!isMatch) {
-        return res.status(400).json({ errors: [{ msg: 'Current password is incorrect' }] });
-      }
-
-      //Hash & save new password
-      const salt = await bcrypt.genSalt(10);
-      user.password = await bcrypt.hash(newPassword, salt);
-      await user.save();
-
-      res.json({ msg: 'Password changed successfully' });
-    } catch (err) {
-      console.error(err);
-      res.status(500).send('Server error');
-    }
-  }
-);
-
-// ─── @route   POST /api/auth/resend-verification
-//     @desc    Send a fresh email‐verification link
-//     @access  Public
-router.post(
-  '/resend-verification',
-  [ body('email', 'Valid email is required').isEmail() ],
-  async (req, res) => {
-    //Validate
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
-    const { email } = req.body;
-
-    try {
-      //Fetch user & ensure not already verified
-      const user = await User.findOne({ email });
-      if (!user) {
-        return res.status(400).json({ msg: 'No account with that email found.' });
-      }
-      if (user.isVerified) {
-        return res.status(400).json({ msg: 'Email is already verified. Please proceed to Login' });
-      }
-
-      //Create new token + expiry
-      const emailToken = generateToken();
-      user.emailVerificationToken = emailToken;
-      user.emailVerificationTokenExpires = Date.now() + 24*60*60*1000; //1 hr
-      await user.save();
-
-      //Send email pointing at your front end
-      const link = `${process.env.CLIENT_URL}/verify-email?token=${emailToken}`;
-      const html = `
-        <h1>Verify your email again</h1>
-        <p>Click below to verify:</p>
-        <a href="${link}">${link}</a>
-      `;
-      await sendEmail({ to: email, subject: 'Resend Verification', html });
-
-      res.json({ msg: 'Verification email resent. Check your inbox.' });
     } catch (err) {
       console.error(err);
       res.status(500).send('Server error');
