@@ -5,6 +5,7 @@ import cors         from 'cors';
 import path         from 'path';
 import { fileURLToPath } from 'url';
 
+import adminRoutes from './routes/admin.js';
 import authRoutes   from './routes/auth.js';
 import reportRoutes from './routes/reports.js';
 
@@ -20,6 +21,7 @@ app.use(express.json());
 // Mount routes
 app.use('/api/auth',   authRoutes);
 app.use('/api/reports', reportRoutes);
+app.use('/api/admin', adminRoutes);
 
 // Serve image uploads
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
