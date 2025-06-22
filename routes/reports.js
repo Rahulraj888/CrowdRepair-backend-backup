@@ -1,39 +1,68 @@
 import express from 'express';
-import multer from 'multer';
-import path from 'path';
-import Report from '../models/Report.js';
-import auth from '../middleware/authMiddleware.js';
+import multer  from 'multer';
+import path    from 'path';
+import Report  from '../models/Report.js';
+import auth    from '../middleware/authMiddleware.js';
+import Comment from '../models/Comment.js';
+import Upvote  from '../models/Upvote.js';
 
 const router = express.Router();
 
-// Configure Multer for image uploads
+// Multer setup
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, 'uploads/'),
-  filename:    (req, file, cb) =>
-    cb(null, Date.now() + path.extname(file.originalname))
+  filename:    (req, file, cb) => cb(null, Date.now() + path.extname(file.originalname))
 });
 const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } });
 
-//GET /api/reports
-// Fetch all reports, or filter by status via ?status=Pending|Fixed|In Progress
+// GET /api/reports
+// List or filter reports
 router.get('/', auth, async (req, res) => {
   try {
-    const { status } = req.query;
-    const filter = status && status !== 'all' ? { status } : {};
-    const reports = await Report.find(filter).sort({ createdAt: -1 });
-    res.json(reports);
-  } catch (err) {
+    const { status='all', type='all' } = req.query;
+    const filter = {};
+    if (status!=='all')    filter.status    = status;
+    if (type!=='all')      filter.issueType = type;
+
+    // grab raw reports
+    const reports = await Report.find(filter)
+      .sort({ createdAt:-1 })
+      .lean();    // lean() so we can add fields
+
+    const ids = reports.map(r => r._id);
+
+    // aggregate upvote counts
+    const ups = await Upvote.aggregate([
+      { $match: { report: { $in: ids } } },
+      { $group: { _id: '$report', count: { $sum:1 } } }
+    ]);
+    const upMap = ups.reduce((m, u) => { m[u._id.toString()] = u.count; return m }, {});
+
+    // aggregate comment counts
+    const cms = await Comment.aggregate([
+      { $match: { report: { $in: ids } } },
+      { $group: { _id: '$report', count: { $sum:1 } } }
+    ]);
+    const cMap = cms.reduce((m, c) => { m[c._id.toString()] = c.count; return m }, {});
+
+    // enrich each report
+    const enriched = reports.map(r => ({
+      ...r,
+      upvoteCount:  upMap[r._id.toString()]  || 0,
+      commentCount: cMap[r._id.toString()]   || 0
+    }));
+
+    res.json(enriched);
+  } catch(err) {
     console.error(err);
-    res.status(500).json({ msg: 'Server error listing reports' });
+    res.status(500).json({ msg:'Server error listing reports' });
   }
 });
 
-//POST /api/reports
-// Create a new report with optional image uploads
+// POST /api/reports
+// Submit new report
 router.post(
-  '/',
-  auth,
-  upload.array('images', 5),
+  '/', auth, upload.array('images', 5),
   async (req, res) => {
     try {
       const { issueType, latitude, longitude, description } = req.body;
@@ -54,9 +83,60 @@ router.post(
       res.status(201).json(report);
     } catch (err) {
       console.error(err);
-      res.status(500).json({ msg: 'Server error' });
+      res.status(500).json({ msg: 'Server error creating report' });
     }
   }
 );
+
+// POST /api/reports/:id/upvote
+// Upvote a report
+router.post('/:id/upvote', auth, async (req, res) => {
+  try {
+    const reportId = req.params.id;
+    const userId   = req.user.id;
+
+    const exists = await Upvote.findOne({ user: userId, report: reportId });
+    if (exists) return res.status(400).json({ msg: 'Already upvoted' });
+
+    await Upvote.create({ user: userId, report: reportId });
+    const count = await Upvote.countDocuments({ report: reportId });
+    res.json({ upvotes: count });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ msg: 'Server error upvoting' });
+  }
+});
+
+// POST /api/reports/:id/comments
+// Add a comment
+router.post('/:id/comments', auth, async (req, res) => {
+  try {
+    const reportId = req.params.id;
+    const userId   = req.user.id;
+    const { text } = req.body;
+
+    const comment = await Comment.create({ user: userId, report: reportId, text });
+    await comment.populate('user', 'name');
+    res.status(201).json(comment);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ msg: 'Server error commenting' });
+  }
+});
+
+// GET /api/reports/:id/comments
+// List comments for a report
+router.get('/:id/comments', auth, async (req, res) => {
+  try {
+    const reportId = req.params.id;
+    const comments = await Comment.find({ report: reportId })
+      .sort({ createdAt: -1 })
+      .populate('user', 'name');
+    res.json(comments);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ msg: 'Server error listing comments' });
+  }
+});
 
 export default router;
