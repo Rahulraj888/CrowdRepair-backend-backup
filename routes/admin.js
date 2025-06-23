@@ -91,7 +91,7 @@ router.patch(
   async (req, res) => {
     try {
       const { status } = req.body;
-      const valid = ['Pending','In Progress','Fixed'];
+      const valid = ['Pending','In Progress','Fixed','Rejected'];
       if (!valid.includes(status)) {
         return res.status(400).json({ msg: 'Invalid status' });
       }
