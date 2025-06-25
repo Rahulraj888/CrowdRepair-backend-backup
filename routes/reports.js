@@ -61,7 +61,6 @@ router.get('/', auth, async (req, res) => {
   }
 });
 
-
 // POST /api/reports
 // Submit new report, then email the reporter and return a thank-you message
 router.post(
@@ -116,6 +115,103 @@ router.post(
     } catch (err) {
       console.error(err);
       res.status(500).json({ msg: 'Server error creating report' });
+    }
+  }
+);
+
+// DELETE /api/reports/:id
+router.delete('/:id', auth, async (req, res) => {
+  try {
+    const report = await Report.findById(req.params.id);
+    if (!report) {
+      return res.status(404).json({ msg: 'Report not found' });
+    }
+
+    // only the creator can delete
+    if (report.user.toString() !== req.user.id) {
+      return res.status(403).json({ msg: 'Unauthorized' });
+    }
+
+    // only pending reports are deletable
+    if (report.status !== 'Pending') {
+      return res
+        .status(400)
+        .json({ msg: 'Only pending reports can be deleted' });
+    }
+
+    await report.deleteOne();
+    res.json({ msg: 'Report deleted successfully' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ msg: 'Server error deleting report' });
+  }
+});
+
+// GET /api/reports/:id
+// Fetch a single report (for pre-filling an edit form)
+router.get('/:id', auth, async (req, res) => {
+  try {
+    const report = await Report.findById(req.params.id);
+    if (!report) {
+      return res.status(404).json({ msg: 'Report not found' });
+    }
+    // Only owner can fetch it for editing
+    if (report.user.toString() !== req.user.id) {
+      return res.status(403).json({ msg: 'Unauthorized' });
+    }
+    res.json(report);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ msg: 'Server error fetching report' });
+  }
+});
+
+// PUT /api/reports/:id
+// Update an existing report (only if Pending)
+router.put(
+  '/:id',
+  auth,
+  upload.array('images', 5),
+  async (req, res) => {
+    try {
+      const report = await Report.findById(req.params.id);
+      if (!report) {
+        return res.status(404).json({ msg: 'Report not found' });
+      }
+
+      // only the creator can edit
+      if (report.user.toString() !== req.user.id) {
+        return res.status(403).json({ msg: 'Unauthorized' });
+      }
+
+      // only pending reports are editable
+      if (report.status !== 'Pending') {
+        return res
+          .status(400)
+          .json({ msg: 'Only pending reports can be edited' });
+      }
+
+      // Apply allowed updates
+      const { issueType, latitude, longitude, description } = req.body;
+      if (issueType) report.issueType = issueType;
+      if (description) report.description = description;
+      if (latitude && longitude) {
+        report.location.coordinates = [
+          parseFloat(longitude),
+          parseFloat(latitude)
+        ];
+      }
+
+      // If new images were uploaded, replace the old ones
+      if (req.files && req.files.length) {
+        report.imageUrls = req.files.map(f => `/uploads/${f.filename}`);
+      }
+
+      await report.save();
+      res.json(report);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ msg: 'Server error updating report' });
     }
   }
 );
