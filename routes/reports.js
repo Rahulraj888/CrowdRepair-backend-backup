@@ -1,12 +1,13 @@
-import express from 'express';
-import multer  from 'multer';
-import path    from 'path';
-import Report  from '../models/Report.js';
-import auth    from '../middleware/authMiddleware.js';
-import Comment from '../models/Comment.js';
-import Upvote  from '../models/Upvote.js';
+import express   from 'express';
+import multer    from 'multer';
+import path      from 'path';
+import Report    from '../models/Report.js';
+import Comment   from '../models/Comment.js';
+import Upvote    from '../models/Upvote.js';
+import User      from '../models/User.js';
 import sendEmail from '../utils/sendEmail.js';
-import User from '../models/User.js';
+import auth      from '../middleware/authMiddleware.js';
+import { checkAdmin } from '../middleware/roleMiddleware.js';
 
 const router = express.Router();
 
@@ -15,77 +16,77 @@ const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, 'uploads/'),
   filename:    (req, file, cb) => cb(null, Date.now() + path.extname(file.originalname))
 });
-const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } });
+const upload = multer({
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 }    // 5MB
+});
 
 // GET /api/reports
 // List or filter reports
 router.get('/', auth, async (req, res) => {
   try {
-    const { status='all', type='all' } = req.query;
+    const { status = 'all', type = 'all' } = req.query;
     const filter = {};
-    if (status!=='all')    filter.status    = status;
-    if (type!=='all')      filter.issueType = type;
+    if (status !== 'all')    filter.status    = status;
+    if (type   !== 'all')    filter.issueType = type;
 
-    // grab raw reports
     const reports = await Report.find(filter)
-      .sort({ createdAt:-1 })
-      .lean();    // lean() so we can add fields
+      .sort({ createdAt: -1 })
+      .lean();
 
     const ids = reports.map(r => r._id);
-
-    // aggregate upvote counts
-    const ups = await Upvote.aggregate([
-      { $match: { report: { $in: ids } } },
-      { $group: { _id: '$report', count: { $sum:1 } } }
+    const [ ups, cms ] = await Promise.all([
+      Upvote.aggregate([
+        { $match: { report: { $in: ids } } },
+        { $group: { _id: '$report', count: { $sum: 1 } } }
+      ]),
+      Comment.aggregate([
+        { $match: { report: { $in: ids } } },
+        { $group: { _id: '$report', count: { $sum: 1 } } }
+      ])
     ]);
-    const upMap = ups.reduce((m, u) => { m[u._id.toString()] = u.count; return m }, {});
 
-    // aggregate comment counts
-    const cms = await Comment.aggregate([
-      { $match: { report: { $in: ids } } },
-      { $group: { _id: '$report', count: { $sum:1 } } }
-    ]);
-    const cMap = cms.reduce((m, c) => { m[c._id.toString()] = c.count; return m }, {});
+    const upMap = ups.reduce((m,u) => (m[u._id.toString()] = u.count, m), {});
+    const cMap  = cms.reduce((m,c) => (m[c._id.toString()] = c.count, m), {});
 
-    // enrich each report
     const enriched = reports.map(r => ({
       ...r,
       upvoteCount:  upMap[r._id.toString()]  || 0,
       commentCount: cMap[r._id.toString()]   || 0
+      // `address` and `rejectReason` are already on `r`
     }));
 
     res.json(enriched);
-  } catch(err) {
+  } catch (err) {
     console.error(err);
-    res.status(500).json({ msg:'Server error listing reports' });
+    res.status(500).json({ msg: 'Server error listing reports' });
   }
 });
 
 // POST /api/reports
-// Submit new report, then email the reporter and return a thank-you message
 router.post(
   '/',
   auth,
   upload.array('images', 5),
   async (req, res) => {
     try {
-      const { issueType, latitude, longitude, description } = req.body;
+      const { issueType, latitude, longitude, description, address } = req.body;
       const imageUrls = req.files.map(f => `/uploads/${f.filename}`);
 
-      //Create & save the report
       const report = new Report({
         user: req.user.id,
         issueType,
         location: {
           type: 'Point',
-          coordinates: [parseFloat(longitude), parseFloat(latitude)]
+          coordinates: [ parseFloat(longitude), parseFloat(latitude) ]
         },
+        address,           // ← full address from frontend
         description,
         imageUrls
       });
       await report.save();
 
-      //Send confirmation email to the reporter
+      // send confirmation email (fire-and-forget)
       const reporter = await User.findById(req.user.id).select('name email');
       if (reporter) {
         const html = `
@@ -95,11 +96,11 @@ router.post(
           <ul>
             <li><strong>Description:</strong> ${description}</li>
             <li><strong>Location:</strong> (${latitude}, ${longitude})</li>
+            <li><strong>Address:</strong> ${address}</li>
           </ul>
-          <p>Our team will review it and take action shortly.</p>
-          <p>Thanks again,<br/>The Mobile Appz Team</p>
+          <p>Our team will review it shortly.</p>
+          <p>Thanks,<br/>The Mobile Appz Team</p>
         `;
-        // fire-and-forget email, log errors if any
         sendEmail({
           to: reporter.email,
           subject: 'Thank you for your report!',
@@ -123,21 +124,13 @@ router.post(
 router.delete('/:id', auth, async (req, res) => {
   try {
     const report = await Report.findById(req.params.id);
-    if (!report) {
-      return res.status(404).json({ msg: 'Report not found' });
-    }
-
+    if (!report) return res.status(404).json({ msg: 'Report not found' });
     // only the creator can delete
-    if (report.user.toString() !== req.user.id) {
+    if (report.user.toString() !== req.user.id)
       return res.status(403).json({ msg: 'Unauthorized' });
-    }
-
     // only pending reports are deletable
-    if (report.status !== 'Pending') {
-      return res
-        .status(400)
-        .json({ msg: 'Only pending reports can be deleted' });
-    }
+    if (report.status !== 'Pending')
+      return res.status(400).json({ msg: 'Only pending reports can be deleted' });
 
     await report.deleteOne();
     res.json({ msg: 'Report deleted successfully' });
@@ -148,17 +141,14 @@ router.delete('/:id', auth, async (req, res) => {
 });
 
 // GET /api/reports/:id
-// Fetch a single report (for pre-filling an edit form)
+// Fetch single report (for editing or detail view)
 router.get('/:id', auth, async (req, res) => {
   try {
     const report = await Report.findById(req.params.id);
-    if (!report) {
-      return res.status(404).json({ msg: 'Report not found' });
-    }
-    // Only owner can fetch it for editing
-    if (report.user.toString() !== req.user.id) {
+    if (!report) return res.status(404).json({ msg: 'Report not found' });
+    if (report.user.toString() !== req.user.id)
       return res.status(403).json({ msg: 'Unauthorized' });
-    }
+
     res.json(report);
   } catch (err) {
     console.error(err);
@@ -175,35 +165,25 @@ router.put(
   async (req, res) => {
     try {
       const report = await Report.findById(req.params.id);
-      if (!report) {
-        return res.status(404).json({ msg: 'Report not found' });
-      }
-
+      if (!report) return res.status(404).json({ msg: 'Report not found' });
       // only the creator can edit
-      if (report.user.toString() !== req.user.id) {
+      if (report.user.toString() !== req.user.id)
         return res.status(403).json({ msg: 'Unauthorized' });
-      }
-
       // only pending reports are editable
-      if (report.status !== 'Pending') {
-        return res
-          .status(400)
-          .json({ msg: 'Only pending reports can be edited' });
-      }
+      if (report.status !== 'Pending')
+        return res.status(400).json({ msg: 'Only pending reports can be edited' });
 
-      // Apply allowed updates
-      const { issueType, latitude, longitude, description } = req.body;
-      if (issueType) report.issueType = issueType;
+      const { issueType, latitude, longitude, description, address } = req.body;
+      if (issueType)  report.issueType = issueType;
       if (description) report.description = description;
+      if (address)     report.address     = address;  // ← new
       if (latitude && longitude) {
         report.location.coordinates = [
           parseFloat(longitude),
           parseFloat(latitude)
         ];
       }
-
-      // If new images were uploaded, replace the old ones
-      if (req.files && req.files.length) {
+      if (req.files?.length) {
         report.imageUrls = req.files.map(f => `/uploads/${f.filename}`);
       }
 
@@ -217,12 +197,10 @@ router.put(
 );
 
 // POST /api/reports/:id/upvote
-// Upvote a report
 router.post('/:id/upvote', auth, async (req, res) => {
   try {
-    const reportId = req.params.id;
-    const userId   = req.user.id;
-
+    const { id: reportId } = req.params;
+    const userId = req.user.id;
     const exists = await Upvote.findOne({ user: userId, report: reportId });
     if (exists) return res.status(400).json({ msg: 'Already upvoted' });
 
@@ -239,11 +217,11 @@ router.post('/:id/upvote', auth, async (req, res) => {
 // Add a comment
 router.post('/:id/comments', auth, async (req, res) => {
   try {
-    const reportId = req.params.id;
-    const userId   = req.user.id;
-    const { text } = req.body;
-
-    const comment = await Comment.create({ user: userId, report: reportId, text });
+    const comment = await Comment.create({
+      user: req.user.id,
+      report: req.params.id,
+      text: req.body.text
+    });
     await comment.populate('user', 'name');
     res.status(201).json(comment);
   } catch (err) {
@@ -256,14 +234,34 @@ router.post('/:id/comments', auth, async (req, res) => {
 // List comments for a report
 router.get('/:id/comments', auth, async (req, res) => {
   try {
-    const reportId = req.params.id;
-    const comments = await Comment.find({ report: reportId })
+    const comments = await Comment.find({ report: req.params.id })
       .sort({ createdAt: -1 })
       .populate('user', 'name');
     res.json(comments);
   } catch (err) {
     console.error(err);
     res.status(500).json({ msg: 'Server error listing comments' });
+  }
+});
+
+// PUT /api/reports/:id/reject
+// Admin can reject a report and supply a reason
+router.put('/:id/reject', auth, checkAdmin, async (req, res) => {
+  try {
+    const { rejectReason } = req.body;
+    const report = await Report.findById(req.params.id);
+    if (!report) return res.status(404).json({ msg: 'Report not found' });
+
+    report.status       = 'Rejected';
+    report.rejectReason = rejectReason;
+    await report.save();
+
+    // Optionally: email the reporter about rejection here
+
+    res.json({ report, msg: 'Report has been rejected' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ msg: 'Server error rejecting report' });
   }
 });
 

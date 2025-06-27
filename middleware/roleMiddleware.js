@@ -4,4 +4,3 @@ export function checkAdmin(req, res, next) {
     }
     next();
 }
-  
