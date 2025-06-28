@@ -83,30 +83,51 @@ router.get(
 );
 
 // PATCH /api/admin/reports/:id/status
-// Update a report’s status
+// Update a report’s status (and optional rejection reason)
 router.patch(
   '/reports/:id/status',
   auth,
   checkAdmin,
   async (req, res) => {
     try {
-      const { status } = req.body;
-      const valid = ['Pending','In Progress','Fixed','Rejected'];
-      if (!valid.includes(status)) {
+      const { status, rejectReason } = req.body;
+      const validStatuses = ['Pending','In Progress','Fixed','Rejected'];
+      if (!validStatuses.includes(status)) {
         return res.status(400).json({ msg: 'Invalid status' });
       }
+      // If rejecting, require a reason
+      if (status === 'Rejected' && (!rejectReason || !rejectReason.trim())) {
+        return res.status(400).json({ msg: 'Rejection reason is required' });
+      }
+      // Build update object
+      const update = {
+        status,
+        updatedAt: Date.now()
+      };
+
+      if (status === 'Rejected') {
+        update.rejectReason = rejectReason.trim();
+      } else {
+        // clear out any existing reason when not rejected
+        update.$unset = { rejectReason: "" };
+      }
+
       const report = await Report.findByIdAndUpdate(
         req.params.id,
-        { status, updatedAt: Date.now() },
+        update,
         { new: true }
       );
-      if (!report) return res.status(404).json({ msg: 'Report not found' });
+      if (!report) {
+        return res.status(404).json({ msg: 'Report not found' });
+      }
+
       res.json(report);
-    } catch(err) {
-      console.error(err);
+    } catch (err) {
+      console.error('Error updating report status:', err);
       res.status(500).json({ msg: 'Server error updating status' });
     }
   }
 );
+
 
 export default router;
