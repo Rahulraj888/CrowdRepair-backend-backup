@@ -8,6 +8,7 @@ import User      from '../models/User.js';
 import sendEmail from '../utils/sendEmail.js';
 import auth      from '../middleware/authMiddleware.js';
 import { checkAdmin } from '../middleware/roleMiddleware.js';
+import axios from 'axios';
 
 const router = express.Router();
 
@@ -119,6 +120,38 @@ router.post(
     }
   }
 );
+
+// GET /api/reports/heatmap
+router.get(
+  '/heatmap',
+  auth,
+  async (req, res) => {
+    try {
+      // 1) fetch reports in the right statuses
+      // status: { $in: ['Pending', 'In Progress'] }
+      const reports = await Report.find({}).select('location.coordinates');
+
+      // 2) remap to [{ latitude, longitude }, …]
+      const points = reports.map(r => ({
+        latitude:  r.location.coordinates[1],
+        longitude: r.location.coordinates[0]
+      }));
+
+      // 3) send to Flask ML service
+      const { data: geojson } = await axios.post(
+        'http://localhost:5001/predict_hotspots',
+        { reports: points }
+      );
+
+      // 4) return GeoJSON FeatureCollection
+      return res.json(geojson);
+    } catch (err) {
+      console.error('Heatmap error:', err);
+      return res.status(500).json({ message: 'Server error generating heatmap' });
+    }
+  }
+);
+
 
 // DELETE /api/reports/:id
 router.delete('/:id', auth, async (req, res) => {
@@ -264,5 +297,6 @@ router.put('/:id/reject', auth, checkAdmin, async (req, res) => {
     res.status(500).json({ msg: 'Server error rejecting report' });
   }
 });
+
 
 export default router;
