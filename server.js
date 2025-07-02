@@ -8,6 +8,7 @@ import { fileURLToPath } from 'url';
 import adminRoutes from './routes/admin.js';
 import authRoutes   from './routes/auth.js';
 import reportRoutes from './routes/reports.js';
+import commentsRouter from './routes/comments.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
@@ -22,6 +23,7 @@ app.use(express.json());
 app.use('/api/auth',   authRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/comments', commentsRouter);
 
 // Serve image uploads
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
