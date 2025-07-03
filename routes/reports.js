@@ -23,7 +23,7 @@ const upload = multer({
 });
 
 // GET /api/reports
-// List or filter reports
+// List or filter reports (including reporter name/email)
 router.get('/', auth, async (req, res) => {
   try {
     const { status = 'all', type = 'all' } = req.query;
@@ -31,7 +31,9 @@ router.get('/', auth, async (req, res) => {
     if (status !== 'all')    filter.status    = status;
     if (type   !== 'all')    filter.issueType = type;
 
+    // Populate user (name & email), then lean()
     const reports = await Report.find(filter)
+      .populate('user', 'name email')
       .sort({ createdAt: -1 })
       .lean();
 
@@ -47,14 +49,34 @@ router.get('/', auth, async (req, res) => {
       ])
     ]);
 
-    const upMap = ups.reduce((m,u) => (m[u._id.toString()] = u.count, m), {});
-    const cMap  = cms.reduce((m,c) => (m[c._id.toString()] = c.count, m), {});
+    const upMap = ups.reduce((m,u) => {
+      m[u._id.toString()] = u.count;
+      return m;
+    }, {});
+    const cMap = cms.reduce((m,c) => {
+      m[c._id.toString()] = c.count;
+      return m;
+    }, {});
 
+    // Enrich each report with upvoteCount, commentCount, plus user.name & user.email
     const enriched = reports.map(r => ({
-      ...r,
+      _id:         r._id,
+      issueType:   r.issueType,
+      description: r.description,
+      location:    r.location,
+      address:     r.address,
+      status:      r.status,
+      rejectReason:r.rejectReason,
+      createdAt:   r.createdAt,
+      updatedAt:   r.updatedAt,
+      imageUrls:   r.imageUrls,
+      user: {
+        _id:   r.user._id,
+        name:  r.user.name,
+        email: r.user.email
+      },
       upvoteCount:  upMap[r._id.toString()]  || 0,
       commentCount: cMap[r._id.toString()]   || 0
-      // `address` and `rejectReason` are already on `r`
     }));
 
     res.json(enriched);
