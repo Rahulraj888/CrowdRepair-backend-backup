@@ -7,7 +7,6 @@ import Upvote    from '../models/Upvote.js';
 import User      from '../models/User.js';
 import sendEmail from '../utils/sendEmail.js';
 import auth      from '../middleware/authMiddleware.js';
-import { checkAdmin } from '../middleware/roleMiddleware.js';
 import axios from 'axios';
 
 const router = express.Router();
@@ -174,7 +173,6 @@ router.get(
   }
 );
 
-
 // DELETE /api/reports/:id
 router.delete('/:id', auth, async (req, res) => {
   try {
@@ -217,7 +215,6 @@ router.delete('/:id', auth, async (req, res) => {
     res.status(500).json({ msg: 'Server error deleting report' });
   }
 });
-
 
 // GET /api/reports/:id
 // Fetch single report (for editing or detail view)
@@ -298,7 +295,6 @@ router.put(
   }
 );
 
-
 // POST /api/reports/:id/upvote
 router.post('/:id/upvote', auth, async (req, res) => {
   try {
@@ -346,27 +342,5 @@ router.get('/:id/comments', auth, async (req, res) => {
     res.status(500).json({ msg: 'Server error listing comments' });
   }
 });
-
-// PUT /api/reports/:id/reject
-// Admin can reject a report and supply a reason
-router.put('/:id/reject', auth, checkAdmin, async (req, res) => {
-  try {
-    const { rejectReason } = req.body;
-    const report = await Report.findById(req.params.id);
-    if (!report) return res.status(404).json({ msg: 'Report not found' });
-
-    report.status       = 'Rejected';
-    report.rejectReason = rejectReason;
-    await report.save();
-
-    // Optionally: email the reporter about rejection here
-
-    res.json({ report, msg: 'Report has been rejected' });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ msg: 'Server error rejecting report' });
-  }
-});
-
 
 export default router;

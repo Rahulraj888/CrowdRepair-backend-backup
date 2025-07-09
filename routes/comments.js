@@ -1,4 +1,3 @@
-// src/routes/comments.js
 import express from 'express';
 import Comment from '../models/Comment.js';
 import auth from '../middleware/authMiddleware.js';
