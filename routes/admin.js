@@ -1,55 +1,53 @@
 import express from 'express';
 import Report from '../models/Report.js';
-import Upvote from '../models/Upvote.js';
-import Comment from '../models/Comment.js';
 import auth from '../middleware/authMiddleware.js';
 import { checkAdmin } from '../middleware/roleMiddleware.js';
+import redisClient from '../utils/redisClient.js';
 
 const router = express.Router();
 
 // GET /api/admin/dashboard
 // Returns total, pending, fixed counts + avg resolution + type distribution
-router.get(
-  '/dashboard',
-  auth,
-  checkAdmin,
-  async (req, res) => {
-    try {
-      // Totals
-      const total = await Report.countDocuments();
-      const pending = await Report.countDocuments({ status: 'Pending' });
-      const fixed = await Report.countDocuments({ status: 'Fixed' });
+router.get('/dashboard', auth, checkAdmin, async (req, res) => {
+  try {
+    const cacheKey = 'admin:dashboard';
+    const cached = await redisClient.get(cacheKey);
+    if (cached) return res.json(JSON.parse(cached));
 
-      // Avg resolution time (in days) for fixed issues
-      const fixedDocs = await Report.find({ status: 'Fixed' }).select('createdAt updatedAt');
-      const avgResolution = fixedDocs.length
-        ? (fixedDocs.reduce((sum, r) =>
-            sum + ((r.updatedAt - r.createdAt)/(1000*60*60*24)), 0
-          ) / fixedDocs.length).toFixed(1)
-        : 0;
+    const total = await Report.countDocuments();
+    const pending = await Report.countDocuments({ status: 'Pending' });
+    const fixed = await Report.countDocuments({ status: 'Fixed' });
 
-      // Issue type distribution
-      const byTypeAgg = await Report.aggregate([
-        { $group: { _id: '$issueType', count: { $sum: 1 } } }
-      ]);
-      const typeDistribution = byTypeAgg.map(t => ({
-        type: t._id,
-        count: t.count
-      }));
+    const fixedDocs = await Report.find({ status: 'Fixed' }).select('createdAt updatedAt');
+    const avgResolution = fixedDocs.length
+      ? (fixedDocs.reduce((sum, r) =>
+          sum + ((r.updatedAt - r.createdAt)/(1000*60*60*24)), 0
+        ) / fixedDocs.length).toFixed(1)
+      : 0;
 
-      res.json({
-        total,
-        pending,
-        fixed,
-        avgResolution: parseFloat(avgResolution),
-        typeDistribution
-      });
-    } catch(err) {
-      console.error(err);
-      res.status(500).json({ msg: 'Server error fetching dashboard stats' });
-    }
+    const byTypeAgg = await Report.aggregate([
+      { $group: { _id: '$issueType', count: { $sum: 1 } } }
+    ]);
+    const typeDistribution = byTypeAgg.map(t => ({
+      type: t._id,
+      count: t.count
+    }));
+
+    const result = {
+      total,
+      pending,
+      fixed,
+      avgResolution: parseFloat(avgResolution),
+      typeDistribution
+    };
+
+    await redisClient.setEx(cacheKey, 300, JSON.stringify(result)); // cache 5 mins
+    res.json(result);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ msg: 'Server error fetching dashboard stats' });
   }
-);
+});
 
 // GET /api/admin/reports
 // Paginated, filterable list of recent reports
@@ -120,7 +118,7 @@ router.patch(
       if (!report) {
         return res.status(404).json({ msg: 'Report not found' });
       }
-
+      await redisClient.del('admin:dashboard');
       res.json(report);
     } catch (err) {
       console.error('Error updating report status:', err);

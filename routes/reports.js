@@ -8,6 +8,7 @@ import User      from '../models/User.js';
 import sendEmail from '../utils/sendEmail.js';
 import auth      from '../middleware/authMiddleware.js';
 import axios from 'axios';
+import redisClient from '../utils/redisClient.js';
 
 const router = express.Router();
 
@@ -26,6 +27,9 @@ const upload = multer({
 router.get('/', auth, async (req, res) => {
   try {
     const { status = 'all', type = 'all' } = req.query;
+    const cacheKey = `reports:${status}:${type}`;
+    const cached = await redisClient.get(cacheKey);
+    if (cached) return res.json(JSON.parse(cached));
     const filter = {};
     if (status !== 'all')    filter.status    = status;
     if (type   !== 'all')    filter.issueType = type;
@@ -77,7 +81,7 @@ router.get('/', auth, async (req, res) => {
       upvoteCount:  upMap[r._id.toString()]  || 0,
       commentCount: cMap[r._id.toString()]   || 0
     }));
-
+    await redisClient.setEx(cacheKey, 300, JSON.stringify(enriched));
     res.json(enriched);
   } catch (err) {
     console.error(err);
@@ -129,7 +133,7 @@ router.post(
           html
         }).catch(err => console.error('Error sending confirmation email:', err));
       }
-
+      await redisClient.del('reports:all:all');
       //Respond with the new report and a popup message
       res.status(201).json({
         report,
@@ -208,7 +212,7 @@ router.delete('/:id', auth, async (req, res) => {
         html,
       }).catch(err => console.error('Email error (delete):', err));
     }
-
+    await redisClient.del('reports:all:all');
     res.json({ msg: 'Report deleted and confirmation email sent.' });
   } catch (err) {
     console.error(err);
@@ -287,6 +291,7 @@ router.put(
           html,
         }).catch(err => console.error('Email error (update):', err));
       }
+      await redisClient.del('reports:all:all');
       res.json({ report, msg: 'Report updated and confirmation email sent.' });
     } catch (err) {
       console.error(err);
@@ -305,6 +310,7 @@ router.post('/:id/upvote', auth, async (req, res) => {
 
     await Upvote.create({ user: userId, report: reportId });
     const count = await Upvote.countDocuments({ report: reportId });
+    await redisClient.del('reports:all:all');
     res.json({ upvotes: count });
   } catch (err) {
     console.error(err);
@@ -322,6 +328,7 @@ router.post('/:id/comments', auth, async (req, res) => {
       text: req.body.text
     });
     await comment.populate('user', 'name');
+    await redisClient.del('reports:all:all');
     res.status(201).json(comment);
   } catch (err) {
     console.error(err);
