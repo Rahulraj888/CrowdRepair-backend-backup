@@ -70,7 +70,10 @@ router.get('/', auth, async (req, res) => {
     const { status = 'all', type = 'all' } = req.query;
     const cacheKey = `reports:${status}:${type}:user:${req.user.id}`;
     const cached = await redisClient.get(cacheKey);
-    if (cached) return res.json(JSON.parse(cached));
+    if (cached)  {
+      console.log("Getting reports from cache")
+      return res.json(JSON.parse(cached));
+    }
 
     const filter = {};
     if (status !== 'all') filter.status = status;

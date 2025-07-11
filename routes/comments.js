@@ -14,25 +14,20 @@ router.put('/:id', auth, async (req, res) => {
     if (!text || !text.trim()) {
       return res.status(400).json({ msg: 'Comment text is required' });
     }
-
-    // Find the comment
+    //Find the comment
     const comment = await Comment.findById(req.params.id);
     if (!comment) {
       return res.status(404).json({ msg: 'Comment not found' });
     }
-
-    // Only the author may update
+    //authorization
     if (comment.user.toString() !== req.user.id) {
       return res.status(403).json({ msg: 'Unauthorized' });
     }
-
     comment.text = text.trim();
     comment.updatedAt = Date.now();
     await comment.save();
-
-    // Re-populate user name
+    //Re-populate user name
     await comment.populate('user', 'name');
-
     res.json(comment);
   } catch (err) {
     console.error('Error updating comment:', err);
@@ -50,12 +45,10 @@ router.delete('/:id', auth, async (req, res) => {
     if (!comment) {
       return res.status(404).json({ msg: 'Comment not found' });
     }
-
     // Only the author may delete
     if (comment.user.toString() !== req.user.id) {
       return res.status(403).json({ msg: 'Unauthorized' });
     }
-
     await comment.deleteOne();
     res.json({ msg: 'Comment deleted' });
   } catch (err) {
