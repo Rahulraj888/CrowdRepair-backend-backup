@@ -50,35 +50,75 @@ router.get('/dashboard', auth, checkAdmin, async (req, res) => {
 });
 
 // GET /api/admin/reports
-// Paginated, filterable list of recent reports
-router.get(
-  '/reports',
-  auth,
-  checkAdmin,
-  async (req, res) => {
-    try {
-      const { status = 'all', type = 'all', page = 1, limit = 10 } = req.query;
-      const filter = {};
-      if (status !== 'all') filter.status = status;
-      if (type   !== 'all') filter.issueType = type;
+// Supports filtering by status/type, pagination, and sorting by time/upvotes
+router.get('/reports', auth, checkAdmin, async (req, res) => {
+  try {
+    const {
+      status = 'all',
+      type = 'all',
+      page = 1,
+      limit = 10,
+      sortBy = 'createdAt',
+      sortOrder = 'desc'
+    } = req.query;
 
-      const skip = (page - 1) * limit;
-      const [ total, reports ] = await Promise.all([
-        Report.countDocuments(filter),
-        Report.find(filter)
-          .sort({ createdAt: -1 })
-          .skip(skip)
-          .limit(parseInt(limit))
-          .populate('user', 'name email')
-      ]);
+    const filter = {};
+    if (status !== 'all') filter.status = status;
+    if (type !== 'all') filter.issueType = type;
 
-      res.json({ total, page: parseInt(page), limit: parseInt(limit), reports });
-    } catch(err) {
-      console.error(err);
-      res.status(500).json({ msg: 'Server error listing reports' });
-    }
+    const skip = (page - 1) * limit;
+    const sortField = sortBy === 'upvotes' ? 'upvoteCount' : 'createdAt';
+    const sortDirection = sortOrder === 'asc' ? 1 : -1;
+
+    // Total count (before aggregation)
+    const total = await Report.countDocuments(filter);
+
+    // Aggregated data with sorting
+    const reports = await Report.aggregate([
+      { $match: filter },
+      {
+        $lookup: {
+          from: 'upvotes',
+          localField: '_id',
+          foreignField: 'report',
+          as: 'upvotes'
+        }
+      },
+      {
+        $addFields: {
+          upvoteCount: { $size: '$upvotes' }
+        }
+      },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'user',
+          foreignField: '_id',
+          as: 'user'
+        }
+      },
+      {
+        $unwind: {
+          path: '$user',
+          preserveNullAndEmptyArrays: true
+        }
+      },
+      { $sort: { [sortField]: sortDirection } },
+      { $skip: skip },
+      { $limit: parseInt(limit) }
+    ]);
+
+    res.json({
+      total,
+      page: parseInt(page),
+      limit: parseInt(limit),
+      reports
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ msg: 'Server error listing reports' });
   }
-);
+});
 
 // PATCH /api/admin/reports/:id/status
 // Update a report’s status (and optional rejection reason)

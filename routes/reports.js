@@ -111,6 +111,27 @@ router.get('/', auth, async (req, res) => {
   }
 });
 
+// GET /api/reports/heatmap
+router.get('/heatmap', auth, async (req, res) => {
+  try {
+    const reports = await Report.find({}).select('location.coordinates');
+    const points = reports.map(r => ({
+      latitude: r.location.coordinates[1],
+      longitude: r.location.coordinates[0]
+    }));
+
+    const { data: geojson } = await axios.post(
+      'http://localhost:5001/predict_hotspots',
+      { reports: points }
+    );
+
+    return res.json(geojson);
+  } catch (err) {
+    console.error('Heatmap error:', err);
+    return res.status(500).json({ message: 'Server error generating heatmap' });
+  }
+});
+
 // POST /api/reports/:id/upvote
 router.post('/:id/upvote', auth, async (req, res) => {
   try {
@@ -245,27 +266,6 @@ router.get('/:id', auth, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ msg: 'Server error fetching report' });
-  }
-});
-
-// GET /api/reports/heatmap
-router.get('/heatmap', auth, async (req, res) => {
-  try {
-    const reports = await Report.find({}).select('location.coordinates');
-    const points = reports.map(r => ({
-      latitude: r.location.coordinates[1],
-      longitude: r.location.coordinates[0]
-    }));
-
-    const { data: geojson } = await axios.post(
-      'http://localhost:5001/predict_hotspots',
-      { reports: points }
-    );
-
-    return res.json(geojson);
-  } catch (err) {
-    console.error('Heatmap error:', err);
-    return res.status(500).json({ message: 'Server error generating heatmap' });
   }
 });
 
