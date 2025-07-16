@@ -1,8 +1,10 @@
 import express from 'express';
 import Report from '../models/Report.js';
+import User from '../models/User.js';
 import auth from '../middleware/authMiddleware.js';
 import { checkAdmin } from '../middleware/roleMiddleware.js';
 import redisClient from '../utils/redisClient.js';
+import sendEmail from '../utils/sendEmail.js';
 
 const router = express.Router();
 
@@ -121,7 +123,6 @@ router.get('/reports', auth, checkAdmin, async (req, res) => {
 });
 
 // PATCH /api/admin/reports/:id/status
-// Update a report’s status (and optional rejection reason)
 router.patch(
   '/reports/:id/status',
   auth,
@@ -129,27 +130,27 @@ router.patch(
   async (req, res) => {
     try {
       const { status, rejectReason } = req.body;
-      const validStatuses = ['Pending','In Progress','Fixed','Rejected'];
+      const validStatuses = ['Pending', 'In Progress', 'Fixed', 'Rejected'];
       if (!validStatuses.includes(status)) {
         return res.status(400).json({ msg: 'Invalid status' });
       }
-      // If rejecting, require a reason
       if (status === 'Rejected' && (!rejectReason || !rejectReason.trim())) {
         return res.status(400).json({ msg: 'Rejection reason is required' });
       }
-      // Build update object
+
+      // Build the update object
       const update = {
         status,
-        updatedAt: Date.now()
+        updatedAt: Date.now(),
       };
-
       if (status === 'Rejected') {
         update.rejectReason = rejectReason.trim();
       } else {
-        // clear out any existing reason when not rejected
+        // Remove any previous rejectReason
         update.$unset = { rejectReason: "" };
       }
 
+      // Update the report
       const report = await Report.findByIdAndUpdate(
         req.params.id,
         update,
@@ -158,7 +159,36 @@ router.patch(
       if (!report) {
         return res.status(404).json({ msg: 'Report not found' });
       }
+
+      // Invalidate dashboard cache
       await redisClient.del('admin:dashboard');
+
+      // Fetch report owner
+      const reporter = await User.findById(report.user).select('name email');
+      if (reporter) {
+        // Build email content
+        const subject = `Update on your "${report.issueType}" report`;
+        const html = `
+          <p>Hi ${reporter.name},</p>
+          <p>Your report <strong>${report.issueType}</strong> (ID: <code>${report._id}</code>) has been updated to <strong>${status}</strong>.</p>
+          <p><strong>Description:</strong><br/>${report.description}</p>
+          ${status === 'Rejected' 
+            ? `<p><strong>Rejection reason:</strong><br/>${rejectReason.trim()}</p>` 
+            : ''}
+          <p>Thank you for helping keep our streets safe.</p>
+        `;
+
+        // Send notification (fire‐and‐forget, but log errors)
+        sendEmail({
+          to: reporter.email,
+          subject,
+          html
+        }).catch(err => {
+          console.error('Error sending status update email:', err);
+        });
+      }
+
+      // Respond with updated report
       res.json(report);
     } catch (err) {
       console.error('Error updating report status:', err);
@@ -166,6 +196,5 @@ router.patch(
     }
   }
 );
-
 
 export default router;
