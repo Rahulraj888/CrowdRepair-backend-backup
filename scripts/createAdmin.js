@@ -13,7 +13,7 @@ async function createAdmin() {
     console.log('✅ Connected to MongoDB');
 
     // Check if admin already exists
-    const existing = await User.findOne({ email: process.env.EMAIL });
+    const existing = await User.findOne({ email: "admin@mobileappz.com" });
     if (existing) {
       console.log('⚠️  Admin already exists');
       process.exit(0);
@@ -21,12 +21,12 @@ async function createAdmin() {
 
     // Hash the password
     const salt     = await bcrypt.genSalt(10);
-    const hashPass = await bcrypt.hash(process.env.PASSWORD, salt);
+    const hashPass = await bcrypt.hash("Admin@123", salt);
 
     // Create the admin user
     const admin = new User({
       name:       'Admin',
-      email:      process.env.EMAIL,
+      email:      'admin@mobileappz.com',
       password:   hashPass,
       mobile:     '0000000000',
       isVerified: true,
